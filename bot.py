@@ -50,7 +50,7 @@ def _home():
 def _health():
     try:
         db_client.admin.command("ping")
-        return jsonify(status="ok", db="connected", ts=datetime.now(timezone.utc).isoformat(), 200
+        return jsonify(status="ok", db="connected", ts=datetime.now(timezone.utc).isoformat()), 200
     except Exception as e:
         return jsonify(status="error", detail=str(e)), 503
 
