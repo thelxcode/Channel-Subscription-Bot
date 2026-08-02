@@ -7,7 +7,7 @@
 # =============================================================================
 
 import os, io, csv, time, logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from threading import Thread
 
 import telebot
@@ -50,7 +50,7 @@ def _home():
 def _health():
     try:
         db_client.admin.command("ping")
-        return jsonify(status="ok", db="connected", ts=datetime.utcnow().isoformat()), 200
+        return jsonify(status="ok", db="connected", ts=datetime.now(timezone.utc).isoformat(), 200
     except Exception as e:
         return jsonify(status="error", detail=str(e)), 503
 
@@ -168,7 +168,7 @@ def admin_kb() -> InlineKeyboardMarkup:
 
 # ── User session state ────────────────────────────────────────────────────────
 def usr_set(uid: int, step: str, **kw):
-    doc = {"user_id": uid, "step": step, "created_at": datetime.utcnow()}
+    doc = {"user_id": uid, "step": step, "created_at": datetime.now(timezone.utc)}
     doc.update(kw)
     sessions_col.update_one({"user_id": uid}, {"$set": doc}, upsert=True)
 
@@ -183,7 +183,7 @@ def usr_clear(uid: int):
 
 # ── Admin state ───────────────────────────────────────────────────────────────
 def adm_set(step: str, **kw):
-    doc = {"admin_id": ADMIN_ID, "step": step, "ts": datetime.utcnow()}
+    doc = {"admin_id": ADMIN_ID, "step": step, "ts": datetime.now(timezone.utc)}
     doc.update(kw)
     adm_col.update_one({"admin_id": ADMIN_ID}, {"$set": doc}, upsert=True)
 
@@ -215,11 +215,11 @@ def router(msg):
     sess = usr_get(uid)
     if sess:
         last = sess.get("last_msg_ts", 0)
-        now_ts = datetime.utcnow().timestamp()
+        now_ts = datetime.now(timezone.utc).timestamp()
         if now_ts - last < 1.5 and not is_admin(uid):
             return  # silently drop
     if sess:
-        usr_update(uid, last_msg_ts=datetime.utcnow().timestamp())
+        usr_update(uid, last_msg_ts=datetime.now(timezone.utc).timestamp())
 
     # ── /cancel for everyone ──────────────────────────────────────────────────
     if text == "/cancel":
@@ -331,7 +331,7 @@ def _cmd_start(msg, arg: str):
                 pass
 
         # Already subscribed?
-        now = datetime.utcnow().timestamp()
+        now = datetime.now(timezone.utc).timestamp()
         existing = users_col.find_one({"user_id": uid, "channel_id": ch_id})
         if existing and existing.get("expiry", 0) > now:
             return send_md(uid,
@@ -440,7 +440,7 @@ def _usr_coupon_input(msg, sess):
         return _show_currencies(uid, ch_id_s, mins_s, discount=0)
 
     exp = coup.get("expires_at")
-    if exp and exp < datetime.utcnow():
+    if exp and exp < datetime.now(timezone.utc):
         send_md(uid, "❌ This coupon has expired.")
         usr_clear(uid)
         return _show_currencies(uid, ch_id_s, mins_s, discount=0)
@@ -602,7 +602,7 @@ def cb_paid(call):
             discount     = disc,
             first_name   = call.from_user.first_name or "",
             username     = call.from_user.username or "",
-            last_msg_ts  = datetime.utcnow().timestamp())
+            last_msg_ts  = datetime.now(timezone.utc).timestamp())
 
     bot.answer_callback_query(call.id, "📝 Please send your Transaction ID")
 
@@ -645,7 +645,7 @@ def _usr_txid(msg, sess):
             f"{CONTACT_USERNAME}")
 
     usr_update(uid, txid=txid, step="await_screenshot",
-               last_msg_ts=datetime.utcnow().timestamp())
+               last_msg_ts=datetime.now(timezone.utc).timestamp())
     send_md(uid,
         f"✅ *TxID saved:* `{txid}`\n\n"
         f"🔐 *Payment Proof — Step 2 of 2*\n"
@@ -700,7 +700,7 @@ def _usr_screenshot(msg, sess):
                step               = "submitted",
                screenshot_file_id = photo_fid,
                status_msg_id      = status_card.message_id,
-               last_msg_ts        = datetime.utcnow().timestamp())
+               last_msg_ts        = datetime.now(timezone.utc).timestamp())
 
     # ── Forward proof to admin ───────────────────────────────────────────────
     user_tag = f"@{sess['username']}" if sess.get("username") else sess.get("first_name","?")
@@ -751,7 +751,7 @@ def cb_approve(call):
     ch_id    = sess["channel_id"]
     mins     = int(sess["mins"])
     duration = fmt_dur(mins)
-    now      = datetime.utcnow()
+    now      = datetime.now(timezone.utc)
     expiry   = now + timedelta(minutes=mins)
 
     # ── Generate single-use invite link ──────────────────────────────────────
@@ -988,7 +988,7 @@ def _adm_ch_plans(msg, adm):
     channels_col.update_one(
         {"channel_id": ch_id},
         {"$set": {"channel_id": ch_id, "name": ch_name,
-                  "plans": plans, "updated_at": datetime.utcnow()}},
+                  "plans": plans, "updated_at": datetime.now(timezone.utc)}},
         upsert=True)
     adm_clear()
 
@@ -1030,7 +1030,7 @@ def _adm_gw_input(msg):
         {"method_name": method},
         {"$set": {"currency": curr.upper(), "method_name": method,
                   "details": details, "instructions": instructions,
-                  "updated_at": datetime.utcnow()}},
+                  "updated_at": datetime.now(timezone.utc)}},
         upsert=True)
     adm_clear()
     send_md(ADMIN_ID,
@@ -1096,7 +1096,7 @@ def _list_pending(chat_id):
         send_md(chat_id, text, markup=kb)
 
 def _show_stats(chat_id):
-    now    = datetime.utcnow().timestamp()
+    now    = datetime.now(timezone.utc).timestamp()
     active = users_col.count_documents({"expiry": {"$gt": now}})
     pend   = sessions_col.count_documents({"step": "submitted"})
     total_hist = history_col.count_documents({})
@@ -1112,7 +1112,7 @@ def _show_stats(chat_id):
         ch_lines.append(f"  • *{ch['name']}*: {cnt} active | {len(rev_docs)} total sales")
 
     # 30-day revenue count
-    since_30 = datetime.utcnow() - timedelta(days=30)
+    since_30 = datetime.now(timezone.utc) - timedelta(days=30)
     rev_30   = history_col.count_documents({"approved_at": {"$gte": since_30}})
 
     send_md(chat_id,
@@ -1166,7 +1166,7 @@ def _adm_coupon_input(msg):
         limit = int(parts[2])
         days  = int(parts[3])
         if not (0 < disc <= 100): raise ValueError("Discount must be 1–100")
-        expires = datetime.utcnow() + timedelta(days=days)
+        expires = datetime.now(timezone.utc) + timedelta(days=days)
     except Exception as e:
         return send_md(ADMIN_ID,
             f"❌ Error: `{e}`\n\nFormat: `CODE, pct, max_uses, days`")
@@ -1174,7 +1174,7 @@ def _adm_coupon_input(msg):
         coupons_col.insert_one({
             "code": code, "discount_pct": disc,
             "limit": limit, "used": 0, "expires_at": expires,
-            "created_at": datetime.utcnow()
+            "created_at": datetime.now(timezone.utc)
         })
     except merr.DuplicateKeyError:
         return send_md(ADMIN_ID, f"❌ Coupon code `{code}` already exists.")
@@ -1202,7 +1202,7 @@ def _adm_broadcast_msg(msg):
     if not msg.text:
         return send_md(ADMIN_ID, "❌ Please send text.")
     adm_clear()
-    now  = datetime.utcnow().timestamp()
+    now  = datetime.now(timezone.utc).timestamp()
     subs = list(users_col.find({"expiry": {"$gt": now}}))
     sent = fails = 0
     for sub in subs:
@@ -1290,7 +1290,7 @@ def _do_kick(uid: int, cid: int):
 
 def _do_extend(uid: int, cid: int, extra_mins: int):
     rec = users_col.find_one({"user_id": uid, "channel_id": cid})
-    now_ts = datetime.utcnow().timestamp()
+    now_ts = datetime.now(timezone.utc).timestamp()
     base   = max(rec["expiry"], now_ts) if rec else now_ts
     new_exp = base + extra_mins * 60
     users_col.update_one(
@@ -1372,7 +1372,7 @@ def _adm_history(chat_id, arg: str):
 #  ADMIN: EXPORT CSV
 # =============================================================================
 def _adm_export(chat_id):
-    now  = datetime.utcnow().timestamp()
+    now  = datetime.now(timezone.utc).timestamp()
     subs = list(users_col.find({"expiry": {"$gt": now}}))
     if not subs:
         return send_md(chat_id, "📭 No active subscriptions to export.")
@@ -1419,7 +1419,7 @@ def _adm_maintenance(chat_id, arg: str):
 # =============================================================================
 def _cmd_mystatus(msg):
     uid  = msg.from_user.id
-    now  = datetime.utcnow().timestamp()
+    now  = datetime.now(timezone.utc).timestamp()
     subs = list(users_col.find({"user_id": uid, "expiry": {"$gt": now}}))
     sess = sessions_col.find_one({"user_id": uid})
 
@@ -1485,7 +1485,7 @@ def _cmd_couponcheck(msg, arg: str):
     if not coup:
         return send_md(msg.from_user.id, f"❌ Coupon `{code}` not found.")
     exp   = coup.get("expires_at")
-    valid = not (exp and exp < datetime.utcnow())
+    valid = not (exp and exp < datetime.now(timezone.utc))
     used  = coup.get("used",0); limit = coup.get("limit",1)
     avail = valid and used < limit
     send_md(msg.from_user.id,
@@ -1500,7 +1500,7 @@ def _cmd_couponcheck(msg, arg: str):
 # =============================================================================
 def _job_kick_expired():
     """Runs every 60 s — kicks expired subscribers and sends renewal notice."""
-    now     = datetime.utcnow().timestamp()
+    now     = datetime.now(timezone.utc).timestamp()
     expired = list(users_col.find({"expiry": {"$lte": now}}))
     if not expired: return
     log.info("Kicker: %d expired", len(expired))
